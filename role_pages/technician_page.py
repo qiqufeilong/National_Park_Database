@@ -1,8 +1,12 @@
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
-import db_utils
 import pymysql
 import datetime
+
+
+import db_utils  # 真实环境请启用这行，注释掉下面的模拟 db_utils 类
+
+
 
 def open(user_id, real_name):
     window = tk.Tk()
@@ -19,16 +23,20 @@ def open(user_id, real_name):
     scroll_text = scrolledtext.ScrolledText(right_frame, width=70, height=40)
     scroll_text.pack()
 
-    # ========== 功能1：维护监测设备 ==========
+    # ========== 功能1：维护监测设备（核心修复：增强错误提示 + 数据校验） ==========
     tk.Label(left_frame, text="维护监测设备", font=("黑体", 12)).grid(row=0, column=0, columnspan=2, pady=10)
     tk.Label(left_frame, text="设备编号：").grid(row=1, column=0, sticky="w")
     entry_device_id = tk.Entry(left_frame, width=20)
     entry_device_id.grid(row=1, column=1)
+    
     tk.Label(left_frame, text="运行状态：").grid(row=2, column=0, sticky="w")
-    entry_status = tk.Entry(left_frame, width=20, value="正常")
+    entry_status = tk.Entry(left_frame, width=20)
+    entry_status.insert(0, "正常")
     entry_status.grid(row=2, column=1)
+    
     tk.Label(left_frame, text="最后校准时间：").grid(row=3, column=0, sticky="w")
-    entry_calibrate = tk.Entry(left_frame, width=20, value=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    entry_calibrate = tk.Entry(left_frame, width=20)
+    entry_calibrate.insert(0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     entry_calibrate.grid(row=3, column=1)
 
     def maintain_device():
@@ -36,10 +44,19 @@ def open(user_id, real_name):
         run_status = entry_status.get().strip()
         last_calibrate = entry_calibrate.get().strip()
 
+        # 1. 基础校验
         if not all([device_id, run_status, last_calibrate]):
             messagebox.showwarning("警告", "请填写完整维护信息！")
             return
 
+        # 2. 校准时间格式校验（避免插入非法时间）
+        try:
+            datetime.datetime.strptime(last_calibrate, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            messagebox.showwarning("警告", "校准时间格式错误！示例：2026-01-03 10:00:00")
+            return
+
+        # 3. 获取数据库连接
         conn = db_utils.get_db_conn()
         if not conn:
             scroll_text.insert(tk.INSERT, "数据库连接失败！\n")
@@ -47,36 +64,49 @@ def open(user_id, real_name):
 
         cursor = conn.cursor()
         try:
+            # 4. 执行更新（确保表名/字段名与数据库一致）
             sql = """
             UPDATE np_monitor_device 
             SET run_status=%s, last_calibrate_time=%s 
             WHERE device_id=%s
             """
             cursor.execute(sql, (run_status, last_calibrate, device_id))
+            
+            # 5. 检查是否更新成功（影响行数）
             if cursor.rowcount > 0:
                 conn.commit()
-                scroll_text.insert(tk.INSERT, f"设备{device_id}维护成功！状态：{run_status}，校准时间：{last_calibrate}\n")
+                scroll_text.insert(tk.INSERT, f"✅ 设备{device_id}维护成功！\n")
+                scroll_text.insert(tk.INSERT, f"状态：{run_status} | 校准时间：{last_calibrate}\n")
             else:
-                scroll_text.insert(tk.INSERT, f"维护失败！未找到设备{device_id}\n")
+                scroll_text.insert(tk.INSERT, f"❌ 维护失败！未找到设备编号{device_id}\n")
+        except pymysql.Error as e:
+            # 精准捕获SQL执行错误
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, err_msg + "\n")
+            conn.rollback()
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"维护失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"维护异常：{str(e)}\n")
             conn.rollback()
         finally:
+            # 确保游标和连接关闭
             cursor.close()
             conn.close()
 
     tk.Button(left_frame, text="提交维护记录", command=maintain_device, width=15).grid(row=4, column=0, columnspan=2, pady=5)
 
-    # ========== 功能2：处理设备故障报修 ==========
+    # ========== 功能2：处理设备故障报修（仅同步错误捕获逻辑，其余不变） ==========
     tk.Label(left_frame, text="处理故障报修", font=("黑体", 12)).grid(row=5, column=0, columnspan=2, pady=10)
     tk.Label(left_frame, text="设备编号：").grid(row=6, column=0, sticky="w")
     entry_device_id2 = tk.Entry(left_frame, width=20)
     entry_device_id2.grid(row=6, column=1)
+    
     tk.Label(left_frame, text="故障描述：").grid(row=7, column=0, sticky="w")
     entry_fault = tk.Entry(left_frame, width=20)
     entry_fault.grid(row=7, column=1)
+    
     tk.Label(left_frame, text="处理结果：").grid(row=8, column=0, sticky="w")
-    entry_result = tk.Entry(left_frame, width=20, value="已修复")
+    entry_result = tk.Entry(left_frame, width=20)
+    entry_result.insert(0, "已修复")
     entry_result.grid(row=8, column=1)
 
     def handle_fault():
@@ -95,7 +125,6 @@ def open(user_id, real_name):
 
         cursor = conn.cursor()
         try:
-            # 更新设备状态（已修复则改为正常，否则故障）
             run_status = "正常" if handle_result == "已修复" else "故障"
             sql = """
             UPDATE np_monitor_device 
@@ -104,13 +133,16 @@ def open(user_id, real_name):
             """
             cursor.execute(sql, (run_status, device_id))
             
-            # 记录故障处理（可扩展故障表，此处简化）
-            scroll_text.insert(tk.INSERT, f"设备{device_id}故障处理完成！\n")
+            scroll_text.insert(tk.INSERT, f"✅ 设备{device_id}故障处理完成！\n")
             scroll_text.insert(tk.INSERT, f"故障描述：{fault_desc} | 处理结果：{handle_result} | 设备状态：{run_status}\n")
             
             conn.commit()
+        except pymysql.Error as e:
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, err_msg + "\n")
+            conn.rollback()
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"处理故障失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"处理故障异常：{str(e)}\n")
             conn.rollback()
         finally:
             cursor.close()
@@ -118,7 +150,7 @@ def open(user_id, real_name):
 
     tk.Button(left_frame, text="提交处理结果", command=handle_fault, width=15).grid(row=9, column=0, columnspan=2, pady=5)
 
-    # ========== 功能3：查看设备运行状态 ==========
+    # ========== 功能3：查看设备运行状态（同步错误捕获逻辑） ==========
     def view_device_status():
         conn = db_utils.get_db_conn()
         if not conn:
@@ -138,7 +170,6 @@ def open(user_id, real_name):
             scroll_text.insert(tk.INSERT, f"【所有监测设备状态】共{len(results)}台\n")
             scroll_text.insert(tk.INSERT, "="*80 + "\n")
             
-            # 统计状态
             status_count = {}
             for res in results:
                 status = res['run_status']
@@ -157,21 +188,26 @@ def open(user_id, real_name):
                 最后校准：{res['last_calibrate_time'] or '未校准'}
                 -------------------------\n
                 """)
+        except pymysql.Error as e:
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, err_msg + "\n")
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"查询设备失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"查询设备异常：{str(e)}\n")
         finally:
             cursor.close()
             conn.close()
 
     tk.Button(left_frame, text="查看设备状态", command=view_device_status, width=15).grid(row=10, column=0, columnspan=2, pady=5)
 
-    # ========== 功能4：优化数据采集策略 ==========
+    # ========== 功能4：优化数据采集策略（同步错误捕获逻辑） ==========
     tk.Label(left_frame, text="优化采集策略", font=("黑体", 12)).grid(row=11, column=0, columnspan=2, pady=10)
     tk.Label(left_frame, text="指标编号：").grid(row=12, column=0, sticky="w")
     entry_index_id = tk.Entry(left_frame, width=20)
     entry_index_id.grid(row=12, column=1)
+    
     tk.Label(left_frame, text="监测频率：").grid(row=13, column=0, sticky="w")
-    entry_frequency = tk.Entry(left_frame, width=20, value="小时")
+    entry_frequency = tk.Entry(left_frame, width=20)
+    entry_frequency.insert(0, "小时")
     entry_frequency.grid(row=13, column=1)
 
     def optimize_collect():
@@ -196,11 +232,15 @@ def open(user_id, real_name):
             cursor.execute(sql, (frequency, index_id))
             if cursor.rowcount > 0:
                 conn.commit()
-                scroll_text.insert(tk.INSERT, f"指标{index_id}采集策略优化成功！监测频率：{frequency}\n")
+                scroll_text.insert(tk.INSERT, f"✅ 指标{index_id}采集策略优化成功！监测频率：{frequency}\n")
             else:
-                scroll_text.insert(tk.INSERT, f"优化失败！未找到指标{index_id}\n")
+                scroll_text.insert(tk.INSERT, f"❌ 优化失败！未找到指标{index_id}\n")
+        except pymysql.Error as e:
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, err_msg + "\n")
+            conn.rollback()
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"优化失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"优化异常：{str(e)}\n")
             conn.rollback()
         finally:
             cursor.close()
@@ -208,7 +248,7 @@ def open(user_id, real_name):
 
     tk.Button(left_frame, text="提交优化配置", command=optimize_collect, width=15).grid(row=14, column=0, columnspan=2, pady=5)
 
-    # ========== 功能5：查看设备校准提醒 ==========
+    # ========== 功能5：查看设备校准提醒（同步错误捕获逻辑） ==========
     def view_calibrate_remind():
         conn = db_utils.get_db_conn()
         if not conn:
@@ -217,7 +257,6 @@ def open(user_id, real_name):
 
         cursor = conn.cursor(pymysql.cursors.DictCursor)
         try:
-            # 查询近7天需要校准的设备
             cursor.execute("""
             SELECT d.device_id, d.device_type, a.area_name, d.calibrate_cycle, d.last_calibrate_time 
             FROM np_monitor_device d
@@ -239,8 +278,11 @@ def open(user_id, real_name):
                 最后校准：{res['last_calibrate_time'] or '从未校准'}
                 -------------------------\n
                 """)
+        except pymysql.Error as e:
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, err_msg + "\n")
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"查询校准提醒失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"查询校准提醒异常：{str(e)}\n")
         finally:
             cursor.close()
             conn.close()
@@ -251,3 +293,7 @@ def open(user_id, real_name):
     tk.Button(left_frame, text="退出", command=window.destroy, width=15, bg="#ff4444", fg="white").grid(row=16, column=0, columnspan=2, pady=20)
 
     window.mainloop()
+
+# 测试调用
+if __name__ == "__main__":
+    open("U008", "吴十")

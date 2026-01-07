@@ -5,6 +5,11 @@ import pymysql
 import datetime
 
 def open(user_id, real_name):
+    # 新增：登录参数空值校验（避免传递空值导致登录异常）
+    if not user_id or not real_name:
+        messagebox.showerror("登录错误", "用户信息为空！请重新登录")
+        return
+    
     window = tk.Tk()
     window.title(f"科研人员-{real_name}")
     window.geometry("900x700")
@@ -18,20 +23,31 @@ def open(user_id, real_name):
     # 结果显示区
     scroll_text = scrolledtext.ScrolledText(right_frame, width=70, height=40)
     scroll_text.pack()
+    
+    # 新增：登录成功提示，确认页面加载正常
+    scroll_text.insert(tk.INSERT, f"✅ 科研人员 {real_name}（ID：{user_id}）登录成功！\n")
+    scroll_text.insert(tk.INSERT, f"登录时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    scroll_text.insert(tk.INSERT, "="*80 + "\n")
 
-    # ========== 功能1：提交科研项目申请 ==========
+    # ========== 功能1：提交科研项目申请（核心修复：Entry的value参数替换为insert） ==========
     tk.Label(left_frame, text="提交科研项目申请", font=("黑体", 12)).grid(row=0, column=0, columnspan=2, pady=10)
     tk.Label(left_frame, text="项目名称：").grid(row=1, column=0, sticky="w")
     entry_proj_name = tk.Entry(left_frame, width=20)
     entry_proj_name.grid(row=1, column=1)
+    
     tk.Label(left_frame, text="申请单位：").grid(row=2, column=0, sticky="w")
     entry_unit = tk.Entry(left_frame, width=20)
     entry_unit.grid(row=2, column=1)
+    
     tk.Label(left_frame, text="研究领域：").grid(row=3, column=0, sticky="w")
     entry_field = tk.Entry(left_frame, width=20)
     entry_field.grid(row=3, column=1)
+    
     tk.Label(left_frame, text="结题时间：").grid(row=4, column=0, sticky="w")
-    entry_finish = tk.Entry(left_frame, width=20, value=(datetime.date.today() + datetime.timedelta(days=365)).strftime("%Y-%m-%d"))
+    entry_finish = tk.Entry(left_frame, width=20)
+    # 修复：删除value参数，用insert设置默认值
+    default_finish = (datetime.date.today() + datetime.timedelta(days=365)).strftime("%Y-%m-%d")
+    entry_finish.insert(0, default_finish)
     entry_finish.grid(row=4, column=1)
 
     def submit_project():
@@ -43,10 +59,18 @@ def open(user_id, real_name):
         if not all([proj_name, apply_unit, research_field, finish_time]):
             messagebox.showwarning("警告", "请填写完整项目信息！")
             return
+        
+        # 新增：结题时间格式校验
+        try:
+            datetime.datetime.strptime(finish_time, "%Y-%m-%d")
+        except ValueError:
+            messagebox.showwarning("格式错误", "结题时间格式应为：YYYY-MM-DD（如2027-01-04）")
+            return
 
         conn = db_utils.get_db_conn()
         if not conn:
-            scroll_text.insert(tk.INSERT, "数据库连接失败！\n")
+            scroll_text.insert(tk.INSERT, "❌ 数据库连接失败！\n")
+            messagebox.showerror("数据库错误", "无法连接数据库，请联系管理员")
             return
 
         cursor = conn.cursor()
@@ -59,11 +83,16 @@ def open(user_id, real_name):
             """
             cursor.execute(sql, (project_id, proj_name, user_id, apply_unit, finish_time, research_field))
             conn.commit()
-            scroll_text.insert(tk.INSERT, f"项目申请提交成功！项目编号：{project_id}\n")
+            scroll_text.insert(tk.INSERT, f"✅ 项目申请提交成功！项目编号：{project_id}\n")
             scroll_text.insert(tk.INSERT, f"项目名称：{proj_name} | 研究领域：{research_field}\n")
             scroll_text.insert(tk.INSERT, f"状态：待公园管理人员审批\n")
+        except pymysql.Error as e:
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, f"❌ 提交失败：{err_msg}\n")
+            messagebox.showerror("SQL错误", err_msg)
+            conn.rollback()
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"提交失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"❌ 提交失败：{str(e)}\n")
             conn.rollback()
         finally:
             cursor.close()
@@ -71,19 +100,24 @@ def open(user_id, real_name):
 
     tk.Button(left_frame, text="提交申请", command=submit_project, width=15).grid(row=5, column=0, columnspan=2, pady=5)
 
-    # ========== 功能2：录入科研数据采集记录 ==========
+    # ========== 功能2：录入科研数据采集记录（修复Entry的value参数） ==========
     tk.Label(left_frame, text="录入数据采集记录", font=("黑体", 12)).grid(row=6, column=0, columnspan=2, pady=10)
     tk.Label(left_frame, text="项目编号：").grid(row=7, column=0, sticky="w")
     entry_proj_id = tk.Entry(left_frame, width=20)
     entry_proj_id.grid(row=7, column=1)
+    
     tk.Label(left_frame, text="采集区域：").grid(row=8, column=0, sticky="w")
     entry_area = tk.Entry(left_frame, width=20)
     entry_area.grid(row=8, column=1)
+    
     tk.Label(left_frame, text="采集内容：").grid(row=9, column=0, sticky="w")
     entry_content = tk.Entry(left_frame, width=20)
     entry_content.grid(row=9, column=1)
+    
     tk.Label(left_frame, text="数据来源：").grid(row=10, column=0, sticky="w")
-    entry_source = tk.Entry(left_frame, width=20, value="实地采集")
+    entry_source = tk.Entry(left_frame, width=20)
+    # 修复：删除value参数，用insert设置默认值
+    entry_source.insert(0, "实地采集")
     entry_source.grid(row=10, column=1)
 
     def add_collect_record():
@@ -98,7 +132,8 @@ def open(user_id, real_name):
 
         conn = db_utils.get_db_conn()
         if not conn:
-            scroll_text.insert(tk.INSERT, "数据库连接失败！\n")
+            scroll_text.insert(tk.INSERT, "❌ 数据库连接失败！\n")
+            messagebox.showerror("数据库错误", "无法连接数据库，请联系管理员")
             return
 
         cursor = conn.cursor()
@@ -107,8 +142,13 @@ def open(user_id, real_name):
             # 校验项目是否存在且在研
             cursor.execute("SELECT project_status FROM np_research_project WHERE project_id=%s AND leader_id=%s", (project_id, user_id))
             proj = cursor.fetchone()
-            if not proj or proj[0] != '在研':
-                scroll_text.insert(tk.INSERT, "项目不存在或非在研状态！\n")
+            if not proj:
+                scroll_text.insert(tk.INSERT, f"❌ 项目{project_id}不存在！\n")
+                messagebox.showinfo("校验失败", f"未查询到项目{project_id}，请核对编号")
+                return
+            if proj[0] != '在研':
+                scroll_text.insert(tk.INSERT, f"❌ 项目{project_id}非在研状态！\n")
+                messagebox.showinfo("校验失败", f"项目{project_id}当前状态：{proj[0]}，仅在研项目可录入采集记录")
                 return
 
             sql = """
@@ -118,9 +158,14 @@ def open(user_id, real_name):
             """
             cursor.execute(sql, (collect_id, project_id, user_id, area_id, collect_content, data_source))
             conn.commit()
-            scroll_text.insert(tk.INSERT, f"采集记录录入成功！采集编号：{collect_id}\n")
+            scroll_text.insert(tk.INSERT, f"✅ 采集记录录入成功！采集编号：{collect_id}\n")
+        except pymysql.Error as e:
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, f"❌ 录入失败：{err_msg}\n")
+            messagebox.showerror("SQL错误", err_msg)
+            conn.rollback()
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"录入失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"❌ 录入失败：{str(e)}\n")
             conn.rollback()
         finally:
             cursor.close()
@@ -128,19 +173,26 @@ def open(user_id, real_name):
 
     tk.Button(left_frame, text="录入记录", command=add_collect_record, width=15).grid(row=11, column=0, columnspan=2, pady=5)
 
-    # ========== 功能3：上传科研成果 ==========
+    # ========== 功能3：上传科研成果（修复Entry的value参数） ==========
     tk.Label(left_frame, text="上传科研成果", font=("黑体", 12)).grid(row=12, column=0, columnspan=2, pady=10)
     tk.Label(left_frame, text="项目编号：").grid(row=13, column=0, sticky="w")
     entry_proj_id2 = tk.Entry(left_frame, width=20)
     entry_proj_id2.grid(row=13, column=1)
+    
     tk.Label(left_frame, text="成果名称：").grid(row=14, column=0, sticky="w")
     entry_ach_name = tk.Entry(left_frame, width=20)
     entry_ach_name.grid(row=14, column=1)
+    
     tk.Label(left_frame, text="成果类型：").grid(row=15, column=0, sticky="w")
-    entry_ach_type = tk.Entry(left_frame, width=20, value="论文")
+    entry_ach_type = tk.Entry(left_frame, width=20)
+    # 修复：删除value参数，用insert设置默认值
+    entry_ach_type.insert(0, "论文")
     entry_ach_type.grid(row=15, column=1)
+    
     tk.Label(left_frame, text="共享权限：").grid(row=16, column=0, sticky="w")
-    entry_permission = tk.Entry(left_frame, width=20, value="内部共享")
+    entry_permission = tk.Entry(left_frame, width=20)
+    # 修复：删除value参数，用insert设置默认值
+    entry_permission.insert(0, "内部共享")
     entry_permission.grid(row=16, column=1)
 
     def upload_achievement():
@@ -155,13 +207,21 @@ def open(user_id, real_name):
 
         conn = db_utils.get_db_conn()
         if not conn:
-            scroll_text.insert(tk.INSERT, "数据库连接失败！\n")
+            scroll_text.insert(tk.INSERT, "❌ 数据库连接失败！\n")
+            messagebox.showerror("数据库错误", "无法连接数据库，请联系管理员")
             return
 
         cursor = conn.cursor()
         achievement_id = f"RA{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
         file_path = f"/upload/research/{achievement_id}.pdf"  # 模拟文件路径
         try:
+            # 新增：校验项目是否存在
+            cursor.execute("SELECT 1 FROM np_research_project WHERE project_id=%s AND leader_id=%s", (project_id, user_id))
+            if not cursor.fetchone():
+                scroll_text.insert(tk.INSERT, f"❌ 项目{project_id}不存在或非本人项目！\n")
+                messagebox.showinfo("校验失败", f"未查询到项目{project_id}（或非本人项目），请核对编号")
+                return
+            
             sql = """
             INSERT INTO np_research_achievement 
             (achievement_id, project_id, achievement_type, achievement_name, publish_time, share_permission, file_path)
@@ -169,10 +229,15 @@ def open(user_id, real_name):
             """
             cursor.execute(sql, (achievement_id, project_id, ach_type, ach_name, share_permission, file_path))
             conn.commit()
-            scroll_text.insert(tk.INSERT, f"成果上传成功！成果编号：{achievement_id}\n")
+            scroll_text.insert(tk.INSERT, f"✅ 成果上传成功！成果编号：{achievement_id}\n")
             scroll_text.insert(tk.INSERT, f"文件路径：{file_path} | 共享权限：{share_permission}\n")
+        except pymysql.Error as e:
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, f"❌ 上传失败：{err_msg}\n")
+            messagebox.showerror("SQL错误", err_msg)
+            conn.rollback()
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"上传失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"❌ 上传失败：{str(e)}\n")
             conn.rollback()
         finally:
             cursor.close()
@@ -180,11 +245,12 @@ def open(user_id, real_name):
 
     tk.Button(left_frame, text="上传成果", command=upload_achievement, width=15).grid(row=17, column=0, columnspan=2, pady=5)
 
-    # ========== 功能4：查看我的项目 ==========
+    # ========== 功能4：查看我的项目（增强错误捕获） ==========
     def view_my_project():
         conn = db_utils.get_db_conn()
         if not conn:
-            scroll_text.insert(tk.INSERT, "数据库连接失败！\n")
+            scroll_text.insert(tk.INSERT, "❌ 数据库连接失败！\n")
+            messagebox.showerror("数据库错误", "无法连接数据库，请联系管理员")
             return
 
         cursor = conn.cursor(pymysql.cursors.DictCursor)
@@ -194,25 +260,52 @@ def open(user_id, real_name):
             """
             cursor.execute(sql, (user_id,))
             results = cursor.fetchall()
-            scroll_text.insert(tk.INSERT, f"【我的科研项目】共{len(results)}条\n")
+            scroll_text.insert(tk.INSERT, f"\n【我的科研项目】共{len(results)}条\n")
             scroll_text.insert(tk.INSERT, "="*80 + "\n")
+            
+            if not results:
+                scroll_text.insert(tk.INSERT, "✅ 暂无科研项目记录\n")
+                return
+            
             for res in results:
+                # 处理数据库返回空值，避免KeyError
+                project_id = res.get('project_id', '未知编号')
+                project_name = res.get('project_name', '未知名称')
+                apply_unit = res.get('apply_unit', '未知单位')
+                approve_time = res.get('approve_time', '未知时间')
+                finish_time = res.get('finish_time', '未知时间')
+                project_status = res.get('project_status', '未知状态')
+                research_field = res.get('research_field', '未知领域')
+                data_permission = res.get('data_permission', '未知权限')
+
                 scroll_text.insert(tk.INSERT, f"""
-                项目编号：{res['project_id']} | 名称：{res['project_name']}
-                申请单位：{res['apply_unit']} | 立项时间：{res['approve_time']}
-                结题时间：{res['finish_time']} | 状态：{res['project_status']}
-                研究领域：{res['research_field']} | 数据权限：{res['data_permission']}
+                项目编号：{project_id} | 名称：{project_name}
+                申请单位：{apply_unit} | 立项时间：{approve_time}
+                结题时间：{finish_time} | 状态：{project_status}
+                研究领域：{research_field} | 数据权限：{data_permission}
                 -------------------------\n
                 """)
+        except pymysql.Error as e:
+            err_msg = f"SQL执行失败【错误码{e.args[0]}】：{e.args[1]}"
+            scroll_text.insert(tk.INSERT, f"❌ 查询失败：{err_msg}\n")
+            messagebox.showerror("SQL错误", err_msg)
         except Exception as e:
-            scroll_text.insert(tk.INSERT, f"查询失败：{e}\n")
+            scroll_text.insert(tk.INSERT, f"❌ 查询失败：{str(e)}\n")
         finally:
             cursor.close()
             conn.close()
 
     tk.Button(left_frame, text="查看我的项目", command=view_my_project, width=15).grid(row=18, column=0, columnspan=2, pady=5)
 
-    # ========== 退出按钮 ==========
-    tk.Button(left_frame, text="退出", command=window.destroy, width=15, bg="#ff4444", fg="white").grid(row=19, column=0, columnspan=2, pady=20)
+    # ========== 退出按钮（新增确认弹窗） ==========
+    def safe_quit():
+        if messagebox.askyesno("退出确认", "确定要退出科研人员页面吗？"):
+            window.destroy()
+
+    tk.Button(left_frame, text="退出", command=safe_quit, width=15, bg="#ff4444", fg="white").grid(row=19, column=0, columnspan=2, pady=20)
 
     window.mainloop()
+
+# 测试调用（模拟登录传递参数）
+if __name__ == "__main__":
+    open("U009", "钱八")
